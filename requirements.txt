@@ -1,4 +1,5 @@
 stoat.py[voice]>=1.2.1
 livekit-simple-audio-source-streaming>=0.1.2
+livekit>=1.1.13
 yt-dlp>=2024.1.0
 python-dotenv>=1.0.0
