@@ -1,0 +1,10 @@
+services:
+  vibebot:
+    build: .
+    container_name: vibebot
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      STOAT_HTTP_BASE: https://chat.supawok.com/api
+      STOAT_WS_BASE: wss://chat.supawok.com/ws
