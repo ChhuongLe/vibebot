@@ -16,6 +16,28 @@ WS_BASE = os.getenv("STOAT_WS_BASE", "wss://chat.supawok.com/ws")
 MENTION_RE = re.compile(r"<@[A-z0-9]{26}>")
 GREETINGS = {"hi", "hello", "hey", "howdy", "!hi"}
 
+HELP_TEXT = (
+    "**Music**\n"
+    "`!play <song name or URL>` -- Queue a song. I'll join your voice channel first if I'm not already in one.\n"
+    "`!queue` -- Show what's queued up next.\n"
+    "`!skip` / `!next` -- Skip the current song and move to the next one in the queue.\n"
+    "`!pause` -- Pause the current song.\n"
+    "`!resume` -- Resume a paused song.\n"
+    "`!stop` -- Stop playback and clear the whole queue.\n"
+    "`!volume <level>` -- Set playback volume. Accepts a `0-10` scale (e.g. `!volume 7`) "
+    "or a percentage (e.g. `!volume 70%`). Defaults to 10%.\n"
+    "\n"
+    "**Voice Channel**\n"
+    "`!join` -- Join the voice channel you're currently in.\n"
+    "`!leave` -- Leave the voice channel and clear the queue.\n"
+    "(I'll also leave on my own after 10 minutes of nothing playing.)\n"
+    "\n"
+    "**Fun**\n"
+    "`!dadjoke` -- Get a random dad joke.\n"
+    "\n"
+    "`!help` -- Show this message."
+)
+
 
 def message_text(message: stoat.Message) -> str:
     text = MENTION_RE.sub("", message.content).strip().lower()
@@ -227,6 +249,11 @@ async def queue(ctx: commands.Context) -> None:
         queue_msg += f"{i}. {song}\n"
 
     await ctx.send(queue_msg)
+
+
+@bot.command(name="help")
+async def help_command(ctx: commands.Context) -> None:
+    await ctx.send(HELP_TEXT)
 
 
 @bot.command(name="debug_methods")
