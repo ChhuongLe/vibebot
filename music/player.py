@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 
 import stoat
 from livekit import rtc
-from livekit_simple_audio_source_streaming import FFmpegAudio, VoiceClient
+from .voice import FFmpegAudio, VoiceClient
 
 from .youtube import resolve_youtube
 

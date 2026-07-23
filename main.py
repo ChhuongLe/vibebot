@@ -120,6 +120,39 @@ async def stop(ctx: commands.Context) -> None:
     await ctx.send("Stopped playback and cleared the queue.")
 
 
+@bot.command(name="next")
+async def next_song(ctx: commands.Context) -> None:
+    if ctx.server is None:
+        return
+    player = bot.get_player(ctx.server.id)
+    if await player.skip():
+        await ctx.send("Playing next song.")
+    else:
+        await ctx.send("Nothing is playing.")
+
+
+@bot.command(name="pause")
+async def pause(ctx: commands.Context) -> None:
+    if ctx.server is None:
+        return
+    player = bot.get_player(ctx.server.id)
+    if await player.pause():
+        await ctx.send("Paused.")
+    else:
+        await ctx.send("Nothing to pause.")
+
+
+@bot.command(name="resume")
+async def resume(ctx: commands.Context) -> None:
+    if ctx.server is None:
+        return
+    player = bot.get_player(ctx.server.id)
+    if await player.resume():
+        await ctx.send("Resumed.")
+    else:
+        await ctx.send("Nothing to resume.")
+
+
 @bot.command(name="volume")
 async def volume(ctx: commands.Context, *, level: str) -> None:
     if ctx.server is None:
