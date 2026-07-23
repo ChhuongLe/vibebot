@@ -99,7 +99,7 @@ class MusicPlayer:
     worker: asyncio.Task | None = None
     current_audio: object | None = None
     paused: bool = False
-    volume: int = 100
+    volume: int = 10
     idle_task: asyncio.Task | None = None
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
