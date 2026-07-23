@@ -5,6 +5,7 @@ import re
 import stoat
 from dotenv import load_dotenv
 from stoat.ext import commands
+from jokes import random_dad_joke
 from music.player import MusicPlayer, find_member_voice_channel, get_voice_node, parse_volume
 from typing import Optional
 
@@ -165,6 +166,11 @@ async def volume(ctx: commands.Context, *, level: str) -> None:
         return
     await player.set_volume(percent)
     await ctx.send(f"Volume set to {percent}%.")
+
+
+@bot.command(name="dadjoke")
+async def dadjoke(ctx: commands.Context) -> None:
+    await ctx.send(random_dad_joke())
 
 
 @bot.command(name="leave")
