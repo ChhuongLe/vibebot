@@ -11,8 +11,8 @@ YDL_OPTS = {
 }
 
 
-def resolve_youtube(query: str) -> tuple[str, str]:
-    """Resolve a YouTube URL or search query to (title, stream_url)."""
+def resolve_youtube(query: str) -> tuple[str, str, float | None]:
+    """Resolve a YouTube URL or search query to (title, stream_url, duration_seconds)."""
     with yt_dlp.YoutubeDL(YDL_OPTS) as ydl:
         info = ydl.extract_info(query, download=False)
 
@@ -30,4 +30,5 @@ def resolve_youtube(query: str) -> tuple[str, str]:
         raise ValueError("Could not get an audio stream for that track.")
 
     title = info.get("title") or query
-    return title, stream_url
+    duration = info.get("duration")  # None for live streams/unknown length
+    return title, stream_url, duration

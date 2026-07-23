@@ -6,7 +6,13 @@ import stoat
 from dotenv import load_dotenv
 from stoat.ext import commands
 from jokes import random_dad_joke
-from music.player import MusicPlayer, find_member_voice_channel, get_voice_node, parse_volume
+from music.player import (
+    MusicPlayer,
+    find_member_voice_channel,
+    format_duration,
+    get_voice_node,
+    parse_volume,
+)
 from typing import Optional
 
 load_dotenv()
@@ -23,7 +29,12 @@ HELP_TEXT = (
     "`!skip` / `!next` -- Skip the current song and move to the next one in the queue.\n"
     "`!pause` -- Pause the current song.\n"
     "`!resume` -- Resume a paused song.\n"
+    "`!nowplaying` -- Show the current song and how far into it we are.\n"
+    "`!remove <#>` -- Remove a specific song from the queue by position (see `!queue`).\n"
+    "`!clear` -- Empty the upcoming queue, leaving the current song playing.\n"
     "`!stop` -- Stop playback and clear the whole queue.\n"
+    "`!loop <song|queue|off>` -- Repeat the current song, repeat the whole queue, "
+    "or turn looping off. No argument shows the current mode.\n"
     "`!volume <level>` -- Set playback volume. Accepts a `0-10` scale (e.g. `!volume 7`) "
     "or a percentage (e.g. `!volume 70%`). Defaults to 10%.\n"
     "\n"
@@ -174,6 +185,75 @@ async def resume(ctx: commands.Context) -> None:
         await ctx.send("Resumed.")
     else:
         await ctx.send("Nothing to resume.")
+
+
+@bot.command(name="nowplaying")
+async def nowplaying(ctx: commands.Context) -> None:
+    if ctx.server is None:
+        return
+    player = bot.get_player(ctx.server.id)
+    if not player.current_title:
+        await ctx.send("Nothing is playing.")
+        return
+
+    elapsed = format_duration(player.elapsed_seconds() or 0)
+    status = " (paused)" if player.paused else ""
+    if player.current_duration:
+        total = format_duration(player.current_duration)
+        await ctx.send(f"**{player.current_title}** -- {elapsed} / {total}{status}")
+    else:
+        await ctx.send(f"**{player.current_title}** -- {elapsed} elapsed{status}")
+
+
+@bot.command(name="remove")
+async def remove(ctx: commands.Context, position: str) -> None:
+    if ctx.server is None:
+        return
+    try:
+        index = int(position)
+    except ValueError:
+        await ctx.send(f"`{position}` is not a valid queue position.")
+        return
+    player = bot.get_player(ctx.server.id)
+    removed = await player.remove(index)
+    if removed is None:
+        await ctx.send(f"No song at position {index}. Use `!queue` to see valid positions.")
+    else:
+        await ctx.send(f"Removed `{removed}` from the queue.")
+
+
+@bot.command(name="clear")
+async def clear(ctx: commands.Context) -> None:
+    if ctx.server is None:
+        return
+    player = bot.get_player(ctx.server.id)
+    count = await player.clear_queue()
+    if count:
+        await ctx.send(f"Cleared {count} song(s) from the queue.")
+    else:
+        await ctx.send("The queue is already empty.")
+
+
+@bot.command(name="loop")
+async def loop(ctx: commands.Context, mode: str = "") -> None:
+    if ctx.server is None:
+        return
+    player = bot.get_player(ctx.server.id)
+    mode = mode.strip().lower()
+
+    if not mode:
+        await ctx.send(f"Loop is currently **{player.loop_mode}**. Use `!loop song`, `!loop queue`, or `!loop off`.")
+        return
+
+    if mode not in ("off", "song", "queue"):
+        await ctx.send("Loop mode must be `song`, `queue`, or `off`.")
+        return
+
+    await player.set_loop_mode(mode)
+    if mode == "off":
+        await ctx.send("Looping disabled.")
+    else:
+        await ctx.send(f"Now looping the {mode}.")
 
 
 @bot.command(name="volume")

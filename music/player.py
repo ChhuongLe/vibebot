@@ -5,6 +5,7 @@ import asyncio
 import logging
 import random
 import signal
+import time
 from dataclasses import dataclass, field
 
 import stoat
@@ -58,6 +59,16 @@ def parse_volume(text: str) -> int:
     return round(max(0.0, min(100.0, percent)))
 
 
+def format_duration(seconds: float) -> str:
+    """Format a number of seconds as `M:SS` (or `H:MM:SS` past an hour)."""
+    total = int(max(0, seconds))
+    hours, remainder = divmod(total, 3600)
+    minutes, secs = divmod(remainder, 60)
+    if hours:
+        return f"{hours}:{minutes:02d}:{secs:02d}"
+    return f"{minutes}:{secs:02d}"
+
+
 def _scale_pcm(data: bytes, gain: float) -> bytes:
     samples = array.array("h")
     samples.frombytes(data)
@@ -101,6 +112,12 @@ class MusicPlayer:
     paused: bool = False
     volume: int = 10
     idle_task: asyncio.Task | None = None
+    loop_mode: str = "off"  # "off", "song", or "queue"
+    current_title: str | None = None
+    current_duration: float | None = None
+    current_started_at: float | None = None
+    paused_accum: float = 0.0
+    pause_started_at: float | None = None
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     async def join(self, channel: stoat.VoiceChannel, node_name: str) -> None:
@@ -149,6 +166,7 @@ class MusicPlayer:
     async def stop(self) -> None:
         async with self.lock:
             self._clear_queue_unlocked()
+            self.loop_mode = "off"
             if self.paused and self.current_audio and self.current_audio._process:
                 self.current_audio._process.send_signal(signal.SIGCONT)
                 self.paused = False
@@ -161,6 +179,7 @@ class MusicPlayer:
                 return False
             self.current_audio._process.send_signal(signal.SIGSTOP)
             self.paused = True
+            self.pause_started_at = time.monotonic()
             return True
 
     async def resume(self) -> bool:
@@ -169,38 +188,87 @@ class MusicPlayer:
                 return False
             self.current_audio._process.send_signal(signal.SIGCONT)
             self.paused = False
+            if self.pause_started_at is not None:
+                self.paused_accum += time.monotonic() - self.pause_started_at
+                self.pause_started_at = None
             return True
 
     async def set_volume(self, percent: int) -> None:
         async with self.lock:
             self.volume = percent
 
+    async def set_loop_mode(self, mode: str) -> None:
+        async with self.lock:
+            self.loop_mode = mode
+
+    async def remove(self, index: int) -> str | None:
+        """Remove a 1-based position from the queue. Returns the removed query, or None if invalid."""
+        async with self.lock:
+            items = self.queue._queue
+            if index < 1 or index > len(items):
+                return None
+            removed = items[index - 1]
+            del items[index - 1]
+            return removed
+
+    async def clear_queue(self) -> int:
+        """Empty the upcoming queue without touching the currently playing song. Returns count removed."""
+        async with self.lock:
+            count = self.queue.qsize()
+            self._clear_queue_unlocked()
+            return count
+
+    def elapsed_seconds(self) -> float | None:
+        if self.current_started_at is None:
+            return None
+        now = time.monotonic()
+        still_paused = (now - self.pause_started_at) if self.pause_started_at is not None else 0.0
+        return now - self.current_started_at - self.paused_accum - still_paused
+
     async def _worker(self) -> None:
         while True:
             query = await self.queue.get()
+            succeeded = True
             try:
-                await self._play_query(query)
+                while True:
+                    ended_naturally = await self._play_query(query)
+                    if ended_naturally and self.loop_mode == "song":
+                        continue
+                    break
             except Exception:
                 logger.exception("Failed to play %r", query)
                 await self._send(f"Could not play `{query}`.")
+                succeeded = False
             finally:
                 self.queue.task_done()
+
+            # Only re-add on success -- looping a broken query forever would
+            # just spam "Could not play" every lap.
+            if succeeded and self.loop_mode == "queue":
+                await self.queue.put(query)
 
             if self.queue.empty():
                 self._schedule_idle_timer()
                 break
 
-    async def _play_query(self, query: str) -> None:
+    async def _play_query(self, query: str) -> bool:
+        """Play one track. Returns True if it ended naturally (not skipped/stopped)."""
         if not self.voice_client:
             raise RuntimeError("Not connected to a voice channel.")
 
-        title, stream_url = await asyncio.to_thread(resolve_youtube, query)
+        title, stream_url, duration = await asyncio.to_thread(resolve_youtube, query)
         await self._send(f"Now playing: **{title}**")
 
         audio = await self.voice_client.play(stream_url, "music")
         _attach_volume(audio, self)
         self.current_audio = audio
+        self.current_title = title
+        self.current_duration = duration
+        self.current_started_at = time.monotonic()
+        self.paused_accum = 0.0
+        self.pause_started_at = None
         self.paused = False
+        ended_naturally = True
         try:
             if audio._task:
                 try:
@@ -218,10 +286,15 @@ class MusicPlayer:
                     # notices this specific track was only *skipped*, not that
                     # the whole player broke. Treat it as "this track ended
                     # early" and let the worker loop move on to the next song.
-                    pass
+                    ended_naturally = False
         finally:
             self.current_audio = None
+            self.current_title = None
+            self.current_duration = None
+            self.current_started_at = None
+            self.pause_started_at = None
             self.paused = False
+        return ended_naturally
 
     async def _send(self, content: str) -> None:
         if not self.text_channel_id:
@@ -274,6 +347,12 @@ class MusicPlayer:
         self.node_name = None
         self.current_audio = None
         self.paused = False
+        self.loop_mode = "off"
+        self.current_title = None
+        self.current_duration = None
+        self.current_started_at = None
+        self.paused_accum = 0.0
+        self.pause_started_at = None
 
     def _clear_queue_unlocked(self) -> None:
         while not self.queue.empty():
