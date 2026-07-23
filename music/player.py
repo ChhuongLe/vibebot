@@ -3,6 +3,7 @@ from __future__ import annotations
 import array
 import asyncio
 import logging
+import random
 import signal
 from dataclasses import dataclass, field
 
@@ -13,6 +14,18 @@ from .voice import FFmpegAudio, VoiceClient
 from .youtube import resolve_youtube
 
 logger = logging.getLogger(__name__)
+
+IDLE_TIMEOUT_SECONDS = 600
+
+IDLE_LEAVE_MESSAGES = [
+    "No one's queued anything in a while, so I'm heading out. Catch you later!",
+    "Ten minutes of silence is my cue to leave -- see you next time!",
+    "Nothing queued, nobody around -- I'm gonna dip. `!play` to bring me back.",
+    "Guess the party's over. Leaving the channel for now.",
+    "I'll take the quiet as a sign to go. Ping me with `!play` whenever.",
+    "Idle timeout reached -- stepping out until someone queues a song.",
+    "No tunes, no reason to stick around. Peace out!",
+]
 
 # livekit-simple-audio-source-streaming's VoiceClient calls participant.is_local()
 # from its "track_published" handler, but livekit-python dropped that method
@@ -87,6 +100,7 @@ class MusicPlayer:
     current_audio: object | None = None
     paused: bool = False
     volume: int = 100
+    idle_task: asyncio.Task | None = None
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     async def join(self, channel: stoat.VoiceChannel, node_name: str) -> None:
@@ -96,6 +110,7 @@ class MusicPlayer:
                 and self.voice_channel
                 and self.voice_channel.id == channel.id
             ):
+                self._schedule_idle_timer()
                 return
 
             await self._disconnect_unlocked()
@@ -104,6 +119,7 @@ class MusicPlayer:
             self.voice_channel = channel
             self.node_name = node_name
             self.voice_client = VoiceClient(room)
+            self._schedule_idle_timer()
 
     async def leave(self) -> None:
         async with self.lock:
@@ -112,6 +128,7 @@ class MusicPlayer:
 
     async def enqueue(self, query: str, text_channel_id: str) -> None:
         self.text_channel_id = text_channel_id
+        self._cancel_idle_timer()
         await self.queue.put(query)
         if self.worker is None or self.worker.done():
             self.worker = asyncio.create_task(self._worker())
@@ -170,6 +187,7 @@ class MusicPlayer:
                 self.queue.task_done()
 
             if self.queue.empty():
+                self._schedule_idle_timer()
                 break
 
     async def _play_query(self, query: str) -> None:
@@ -215,7 +233,31 @@ class MusicPlayer:
 
         await channel.send(content)
 
+    def _cancel_idle_timer(self) -> None:
+        if self.idle_task and not self.idle_task.done():
+            self.idle_task.cancel()
+        self.idle_task = None
+
+    def _schedule_idle_timer(self) -> None:
+        self._cancel_idle_timer()
+        self.idle_task = asyncio.create_task(self._idle_timeout())
+
+    async def _idle_timeout(self) -> None:
+        try:
+            await asyncio.sleep(IDLE_TIMEOUT_SECONDS)
+        except asyncio.CancelledError:
+            return
+
+        self.idle_task = None
+        async with self.lock:
+            if not self.voice_client:
+                return
+            await self._disconnect_unlocked()
+            self._clear_queue_unlocked()
+        await self._send(random.choice(IDLE_LEAVE_MESSAGES))
+
     async def _disconnect_unlocked(self) -> None:
+        self._cancel_idle_timer()
         if self.worker and not self.worker.done():
             self.worker.cancel()
             try:
