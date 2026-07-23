@@ -166,6 +166,15 @@ class FFmpegAudio(AudioSourceBase):
 
         ffmpeg_cmd = [
             "ffmpeg",
+            # Transparently retry the underlying HTTP connection if it drops
+            # mid-stream (e.g. a googlevideo CDN hiccup) instead of just
+            # ending output early and cutting the track short.
+            "-reconnect",
+            "1",
+            "-reconnect_streamed",
+            "1",
+            "-reconnect_delay_max",
+            "5",
             "-i",
             self._source,
             "-ac",
@@ -263,7 +272,10 @@ class FFmpegAudio(AudioSourceBase):
                 self._process.wait()
             stderr = self._process.stderr.read() if self._process.stderr else ""
             if stderr:
-                logger.warning(f"FFmpeg stderr: {stderr.decode()[:500]}")
+                # The first ~500 chars are always just the version/build
+                # banner ffmpeg prints on startup; the actual error (if any)
+                # is near the end, so log the tail instead of the head.
+                logger.warning(f"FFmpeg stderr: {stderr.decode(errors='replace')[-2000:]}")
             self._process = None
 
     async def close(self) -> None:
